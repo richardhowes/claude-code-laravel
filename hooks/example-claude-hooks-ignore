@@ -1,0 +1,96 @@
+# Example .claude-hooks-ignore file
+# Copy this to your project root as .claude-hooks-ignore to exclude files
+# from Claude hooks checking.
+#
+# Format: Shell glob patterns, one per line
+# Comments start with #
+# Empty lines are ignored
+
+# Vendor directories
+vendor/**
+node_modules/**
+.git/**
+
+# Laravel-specific directories
+bootstrap/cache/**
+storage/framework/**
+storage/logs/**
+storage/app/public/**
+public/hot
+public/storage
+
+# Generated files
+*.generated.ts
+dist/**
+build/**
+out/**
+_ide_helper.php
+_ide_helper_models.php
+.phpstorm.meta.php
+
+# Third-party code
+third_party/**
+external/**
+
+# Test fixtures that might contain unusual patterns
+testdata/**
+fixtures/**
+**/testdata/**
+
+# Documentation that might have code examples
+examples/**
+
+# Specific files
+.golangci.yml  # Has example configs that might trigger checks
+TODO.md        # Might have many TODO items
+
+# IDE and editor files
+.idea/**
+.vscode/**
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+tmp/**
+temp/**
+*.tmp
+*.temp
+
+# Archives
+*.zip
+*.tar.gz
+*.tgz
+
+# Binaries
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Images and media
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.svg
+*.mp4
+*.mp3
+
+# Specific patterns for Laravel projects
+# Configuration files that might have examples
+config/**
+database/migrations/**
+database/seeders/**
+
+# Blade templates with mixed content
+resources/views/**/*.blade.php
+
+# Language files
+lang/**
+resources/lang/**
+
