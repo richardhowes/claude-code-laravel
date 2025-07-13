@@ -24,6 +24,16 @@
 # Don't use set -e - we need to control exit codes carefully
 set +e
 
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Source common helpers if available
+if [[ -f "$SCRIPT_DIR/../common-helpers.sh" ]]; then
+    source "$SCRIPT_DIR/../common-helpers.sh"
+elif [[ -f "$SCRIPT_DIR/common-helpers.sh" ]]; then
+    source "$SCRIPT_DIR/common-helpers.sh"
+fi
+
 # ============================================================================
 # COLOR DEFINITIONS AND UTILITIES
 # ============================================================================
@@ -84,6 +94,17 @@ detect_project_type() {
     local project_type="unknown"
     local types=()
     
+    # Check if common-helpers.sh provided detect_laravel_stack function
+    if command_exists detect_laravel_stack; then
+        local laravel_stack=$(detect_laravel_stack)
+        if [[ "$laravel_stack" != "none" ]]; then
+            # For Laravel projects, use the specific stack
+            echo "laravel:$laravel_stack"
+            return
+        fi
+    fi
+    
+    # Fallback to original detection logic
     # Laravel project (check first - most specific)
     if [[ -f "artisan" ]] && [[ -f "composer.json" ]] && grep -q "laravel/framework" composer.json 2>/dev/null; then
         types+=("laravel")
@@ -215,12 +236,29 @@ load_config() {
 # ============================================================================
 
 lint_laravel() {
+    local stack="${1:-}"
+    
     if [[ "${CLAUDE_HOOKS_LARAVEL_ENABLED:-true}" != "true" ]]; then
         log_debug "Laravel linting disabled"
         return 0
     fi
     
     log_info "Running Laravel formatting and linting..."
+    
+    # Extract stack name if provided in format "laravel:stack"
+    if [[ "$stack" == laravel:* ]]; then
+        stack="${stack#laravel:}"
+    fi
+    
+    # Load stack-specific module if available
+    local stack_checks_loaded=false
+    if [[ -n "$stack" ]] && command_exists load_stack_module; then
+        if load_stack_module "$stack"; then
+            log_debug "Loaded stack module: laravel-$stack"
+            stack_checks_loaded=true
+        fi
+    fi
+    
     log_info "Using Composer scripts"
 
     # Refactor with Rector
@@ -253,6 +291,33 @@ lint_laravel() {
          log_info "Running Laravel Annotate $CLAUDE_HOOKS_LARAVEL_ANNOTATE_CMD"
         if ! annotate_output=$($CLAUDE_HOOKS_LARAVEL_ANNOTATE_CMD 2>&1); then
             log_debug "Docblock annotation failed (non-blocking): $annotate_output"
+        fi
+    fi
+    
+    # Run stack-specific lint checks if module was loaded
+    if [[ "$stack_checks_loaded" == "true" ]]; then
+        local stack_function="${stack//-/_}_lint_checks"
+        if command_exists "$stack_function"; then
+            log_info "Running $stack specific checks..."
+            
+            # Get list of modified files to check
+            local files_to_check=()
+            if [[ -n "${CLAUDE_HOOKS_MODIFIED_FILES:-}" ]]; then
+                mapfile -t files_to_check <<< "$CLAUDE_HOOKS_MODIFIED_FILES"
+            else
+                # Check recently modified files
+                mapfile -t files_to_check < <(find . -type f \( -name "*.php" -o -name "*.vue" -o -name "*.jsx" -o -name "*.tsx" \) -mtime -1 2>/dev/null | head -20)
+            fi
+            
+            # Run stack-specific checks on each file
+            for file in "${files_to_check[@]}"; do
+                if [[ -f "$file" ]] && ! should_skip_file "$file"; then
+                    if ! $stack_function "$file"; then
+                        # Errors are already added by the stack function
+                        :
+                    fi
+                fi
+            done
         fi
     fi
 }
@@ -317,10 +382,23 @@ lint_javascript() {
     if [[ -f "package.json" ]] && grep -q "eslint" package.json 2>/dev/null; then
         if command_exists npm; then
             local eslint_output
+            # Try to run fix first
+            if npm run lint:fix --if-present 2>/dev/null; then
+                log_debug "ESLint auto-fixed issues"
+            fi
+            # Then check for remaining issues
             if ! eslint_output=$(npm run lint --if-present 2>&1); then
                 add_error "ESLint found issues"
                 echo "$eslint_output" >&2
             fi
+        fi
+    fi
+    
+    # Vue-specific linting (for Inertia + Vue projects)
+    if [[ -f "package.json" ]] && grep -q "@vue/eslint" package.json 2>/dev/null; then
+        log_info "Running Vue-specific linting..."
+        if command_exists npm && npm run lint:vue --if-present 2>/dev/null; then
+            log_debug "Vue linting completed"
         fi
     fi
     
@@ -345,6 +423,20 @@ lint_javascript() {
                     add_error "Prettier formatting failed"
                     echo "$format_output" >&2
                 fi
+            fi
+        fi
+    fi
+    
+    # TypeScript checking (for Inertia + Vue/React with TypeScript)
+    if [[ -f "tsconfig.json" ]]; then
+        log_info "Running TypeScript type checking..."
+        if command_exists npm && npm run typecheck --if-present 2>/dev/null; then
+            log_debug "TypeScript checking completed"
+        elif command_exists tsc; then
+            local tsc_output
+            if ! tsc_output=$(tsc --noEmit 2>&1); then
+                add_error "TypeScript type errors found"
+                echo "$tsc_output" >&2
             fi
         fi
     fi
@@ -412,9 +504,20 @@ main() {
     else
         # Single project type
         case "$PROJECT_TYPE" in
-            "laravel") lint_laravel ;;
-            "php") lint_php ;;
-            "javascript") lint_javascript ;;
+            laravel:*)
+                # Laravel with specific stack
+                lint_laravel "$PROJECT_TYPE"
+                ;;
+            "laravel")
+                # Generic Laravel (backwards compatibility)
+                lint_laravel
+                ;;
+            "php") 
+                lint_php 
+                ;;
+            "javascript") 
+                lint_javascript 
+                ;;
             "unknown") 
                 log_info "No recognized project type, skipping checks"
                 ;;

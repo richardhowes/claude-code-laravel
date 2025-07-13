@@ -25,7 +25,21 @@ set -euo pipefail
 
 # Source common helpers
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${SCRIPT_DIR}/common-helpers.sh"
+
+# Try different locations for common-helpers.sh
+if [[ -f "$SCRIPT_DIR/../common-helpers.sh" ]]; then
+    source "$SCRIPT_DIR/../common-helpers.sh"
+elif [[ -f "$SCRIPT_DIR/common-helpers.sh" ]]; then
+    source "$SCRIPT_DIR/common-helpers.sh"
+else
+    # Fallback to basic functions if common-helpers.sh not found
+    command_exists() {
+        command -v "$1" &> /dev/null
+    }
+    log_debug() {
+        [[ "${CLAUDE_HOOKS_DEBUG:-0}" == "1" ]] && echo -e "[DEBUG] $*" >&2
+    }
+fi
 
 # ============================================================================
 # SETUP FUNCTIONS
@@ -354,6 +368,22 @@ run_laravel_tests() {
         return 0
     fi
 
+    # Detect Laravel stack if common-helpers.sh is available
+    local stack=""
+    if command_exists detect_laravel_stack; then
+        stack=$(detect_laravel_stack)
+        log_debug "Detected Laravel stack: $stack"
+    fi
+
+    # Load stack-specific module if available
+    local stack_module_loaded=false
+    if [[ -n "$stack" ]] && [[ "$stack" != "none" ]] && command_exists load_stack_module; then
+        if load_stack_module "$stack"; then
+            log_debug "Loaded stack module: laravel-$stack"
+            stack_module_loaded=true
+        fi
+    fi
+
     local dir=$(dirname "$file")
     local base=$(basename "$file" .php)
     local failed=0
@@ -453,20 +483,67 @@ run_laravel_tests() {
         "tests/Feature/$(basename "$dir")/${base}Test.php"
     )
 
-    # For Livewire components, check specific patterns
-    if [[ "$dir" =~ app/Livewire ]] || [[ "$dir" =~ app/Http/Livewire ]]; then
-        test_candidates+=(
-            "tests/Feature/Livewire/${base}Test.php"
-            "tests/Unit/Livewire/${base}Test.php"
-        )
-    fi
+    # Use stack-specific test patterns if available
+    if [[ "$stack_module_loaded" == "true" ]]; then
+        # Check if stack has specific test patterns
+        local stack_test_function="${stack//-/_}_test_patterns"
+        if command_exists "$stack_test_function"; then
+            local stack_patterns=$($stack_test_function)
+            log_debug "Using stack-specific test patterns: $stack_patterns"
+            
+            # Add stack-specific patterns based on the file location
+            case "$stack" in
+                "livewire")
+                    if [[ "$dir" =~ app/Livewire ]] || [[ "$dir" =~ app/Http/Livewire ]]; then
+                        test_candidates+=(
+                            "tests/Feature/Livewire/${base}Test.php"
+                            "tests/Unit/Livewire/${base}Test.php"
+                        )
+                    fi
+                    ;;
+                "filament")
+                    if [[ "$dir" =~ app/Filament ]]; then
+                        test_candidates+=(
+                            "tests/Feature/Filament/${base}Test.php"
+                            "tests/Unit/Filament/${base}Test.php"
+                        )
+                    fi
+                    ;;
+                "inertia-vue"|"inertia-react")
+                    # For Inertia, also check JavaScript test patterns
+                    if [[ "$dir" =~ resources/js/Pages ]]; then
+                        test_candidates+=(
+                            "tests/Feature/Pages/${base}Test.php"
+                        )
+                    fi
+                    ;;
+            esac
+        fi
+        
+        # Check if we should skip testing for this file using stack-specific logic
+        local should_test_function="${stack//-/_}_should_test_file"
+        if command_exists "$should_test_function"; then
+            if ! $should_test_function "$file"; then
+                require_tests=false
+            fi
+        fi
+    else
+        # Fallback to original patterns for backwards compatibility
+        # For Livewire components, check specific patterns
+        if [[ "$dir" =~ app/Livewire ]] || [[ "$dir" =~ app/Http/Livewire ]]; then
+            test_candidates+=(
+                "tests/Feature/Livewire/${base}Test.php"
+                "tests/Unit/Livewire/${base}Test.php"
+            )
+        fi
 
-    # For Filament resources
-    if [[ "$dir" =~ app/Filament ]]; then
-        test_candidates+=(
-            "tests/Feature/Filament/${base}Test.php"
-            "tests/Unit/Filament/${base}Test.php"
-        )
+        # For Filament resources
+        if [[ "$dir" =~ app/Filament ]]; then
+            test_candidates+=(
+                "tests/Feature/Filament/${base}Test.php"
+                "tests/Unit/Filament/${base}Test.php"
+            )
+        fi
     fi
 
     for candidate in "${test_candidates[@]}"; do
@@ -555,14 +632,46 @@ main() {
 
     local failed=0
 
+    # Detect Laravel stack for Inertia projects
+    local stack=""
+    if [[ -f "artisan" && -f "composer.json" ]] && command_exists detect_laravel_stack; then
+        stack=$(detect_laravel_stack)
+        log_debug "Main: Detected Laravel stack: $stack"
+    fi
+
     # Language-specific test runners - prioritize Laravel detection
     if [[ -f "artisan" && -f "composer.json" ]]; then
-        # This is a Laravel project, run Laravel tests
-        run_laravel_tests "$FILE_PATH" || failed=1
+        # This is a Laravel project
+        if [[ "$FILE_PATH" =~ \.php$ ]]; then
+            # PHP file - run Laravel tests
+            run_laravel_tests "$FILE_PATH" || failed=1
+        elif [[ "$FILE_PATH" =~ \.[jt]sx?$ ]] || [[ "$FILE_PATH" =~ \.vue$ ]]; then
+            # JavaScript/TypeScript/Vue file in Laravel project
+            if [[ "$stack" == "inertia-vue" ]] || [[ "$stack" == "inertia-react" ]]; then
+                # For Inertia projects, run both JS and PHP tests
+                run_javascript_tests "$FILE_PATH" || failed=1
+                
+                # Also check for related PHP controller tests
+                if [[ "$FILE_PATH" =~ resources/js/Pages/ ]]; then
+                    local page_name=$(basename "$FILE_PATH" | sed 's/\.[^.]*$//')
+                    local controller_path="app/Http/Controllers/${page_name}Controller.php"
+                    if [[ -f "$controller_path" ]]; then
+                        log_debug "Also running tests for related controller: $controller_path"
+                        run_laravel_tests "$controller_path" || failed=1
+                    fi
+                fi
+            else
+                # Non-Inertia Laravel project with JS files
+                run_javascript_tests "$FILE_PATH" || failed=1
+            fi
+        else
+            # Other file types in Laravel project
+            exit 0
+        fi
     elif [[ "$FILE_PATH" =~ \.php$ ]]; then
         # PHP file but not Laravel - could add generic PHP test runner here
         run_laravel_tests "$FILE_PATH" || failed=1
-    elif [[ "$FILE_PATH" =~ \.[jt]sx?$ ]]; then
+    elif [[ "$FILE_PATH" =~ \.[jt]sx?$ ]] || [[ "$FILE_PATH" =~ \.vue$ ]]; then
         run_javascript_tests "$FILE_PATH" || failed=1
     else
         # No tests for this file type

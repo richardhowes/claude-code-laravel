@@ -1,6 +1,6 @@
 # Claude Code - Laravel Development Configuration
 
-A comprehensive Claude Code configuration optimized for Laravel, Livewire, and Filament development with automated quality checks, testing, and real-time development patterns.
+A comprehensive Claude Code configuration optimized for Laravel development with **multi-stack support** including Livewire, Filament, Inertia (Vue/React), and API-only projects. Features automated quality checks, testing, and stack-specific development patterns.
 
 ## 🚀 Quick Start
 
@@ -115,8 +115,9 @@ vim .claude-hooks-config.sh
 
 ### Smart Development Workflow
 - **Automatic Project Detection**: Recognizes Laravel, Node.js, and other project types
-- **Quality Pipeline**: Automated formatting, linting, and testing
-- **Hook System**: Smart hooks that run appropriate checks based on your project
+- **Multi-Stack Support**: Auto-detects Laravel frontend stack (Livewire, Filament, Inertia+Vue, Inertia+React, API-only)
+- **Quality Pipeline**: Automated formatting, linting, and testing adapted to your stack
+- **Hook System**: Smart hooks that run appropriate checks based on your project and stack
 - **Command Integration**: Special commands like `/check`, `/next`, and `/prompt`
 
 ### Session Management
@@ -141,21 +142,33 @@ vim .claude-hooks-config.sh
 ```
 ~/.claude/
 ├── CLAUDE.md                    # Main configuration and standards
+├── CLAUDE-MODULAR.md            # Stack-adaptive configuration
 ├── README.md                    # This file
+├── MULTI-STACK-SUPPORT.md       # Multi-stack documentation
 ├── settings.json                # Claude Code hook configuration
 ├── install.sh                   # Installation script
 ├── uninstall.sh                 # Uninstallation script
+├── common-helpers.sh            # Stack detection and utilities
 ├── commands/
 │   ├── check.md                 # Quality verification command
 │   ├── next.md                  # Implementation workflow
 │   └── prompt.md                # Prompt synthesis tool
-└── hooks/
-    ├── smart-lint.sh            # Automated code quality checks
-    ├── smart-test.sh            # Automated testing
-    ├── crono.sh                 # Crono integration (optional)
-    ├── common-helpers.sh        # Shared utilities
-    ├── example-claude-hooks-config.sh
-    └── example-claude-hooks-ignore
+├── hooks/
+│   ├── smart-lint.sh            # Automated code quality checks
+│   ├── smart-test.sh            # Automated testing
+│   ├── crono.sh                 # Crono integration (optional)
+│   ├── common-helpers.sh        # Shared utilities
+│   ├── example-claude-hooks-config.sh
+│   └── example-claude-hooks-ignore
+├── stacks/                      # Stack-specific modules
+│   ├── laravel-livewire.sh      # Livewire rules and checks
+│   ├── laravel-filament.sh      # Filament rules and checks
+│   ├── laravel-inertia-vue.sh   # Inertia + Vue rules
+│   ├── laravel-inertia-react.sh # Inertia + React rules
+│   └── laravel-api.sh           # API-only rules
+└── claude-md-stacks/            # Stack-specific CLAUDE.md templates
+    ├── inertia-vue.md           # Inertia + Vue guidelines
+    └── inertia-react.md         # Inertia + React guidelines
 ```
 
 ## 🔧 Usage
@@ -248,6 +261,24 @@ temp-files/**
 ```
 
 ## 🧪 Laravel Project Integration
+
+### Multi-Stack Configuration
+
+The system automatically detects your Laravel frontend stack:
+
+- **Livewire**: Server-side rendering with real-time updates
+- **Filament**: Admin panel framework built on Livewire
+- **Inertia + Vue**: Modern SPA with Vue 3 Composition API
+- **Inertia + React**: Modern SPA with React hooks
+- **API-only**: RESTful API without frontend
+
+To force a specific stack:
+```bash
+# In .claude-hooks-config.sh
+export CLAUDE_HOOKS_LARAVEL_STACK="inertia-vue"
+```
+
+See [MULTI-STACK-SUPPORT.md](MULTI-STACK-SUPPORT.md) for detailed stack configuration.
 
 ### Required Composer Scripts
 
